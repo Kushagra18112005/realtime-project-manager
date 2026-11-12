@@ -1,0 +1,12 @@
+import express from "express";import {z} from "zod";import {EventEmitter} from "node:events";
+export const app=express();app.use(express.json());const events=new EventEmitter();
+type Task={id:string;projectId:string;title:string;status:"todo"|"doing"|"done";assignee?:string};
+const projects=new Map<string,{id:string;name:string}>();const tasks=new Map<string,Task>();
+app.get("/health",(_q,r)=>r.json({ok:true}));
+app.post("/api/projects",(q,r)=>{const p=z.object({name:z.string().min(2)}).safeParse(q.body);if(!p.success)return r.status(400).json({error:"Invalid name"});const item={id:crypto.randomUUID(),name:p.data.name};projects.set(item.id,item);return r.status(201).json(item)});
+app.get("/api/projects",(_q,r)=>r.json([...projects.values()]));
+app.post("/api/projects/:id/tasks",(q,r)=>{if(!projects.has(q.params.id))return r.status(404).json({error:"Project not found"});const p=z.object({title:z.string().min(1),assignee:z.string().optional()}).safeParse(q.body);if(!p.success)return r.status(400).json({error:"Invalid task"});const t:Task={id:crypto.randomUUID(),projectId:q.params.id,status:"todo",...p.data};tasks.set(t.id,t);events.emit("change",t);return r.status(201).json(t)});
+app.get("/api/projects/:id/tasks",(q,r)=>r.json([...tasks.values()].filter(t=>t.projectId===q.params.id)));
+app.patch("/api/tasks/:id",(q,r)=>{const t=tasks.get(q.params.id);if(!t)return r.status(404).json({error:"Not found"});const p=z.object({status:z.enum(["todo","doing","done"]).optional(),title:z.string().min(1).optional(),assignee:z.string().optional()}).safeParse(q.body);if(!p.success)return r.status(400).json({error:"Invalid update"});Object.assign(t,p.data);events.emit("change",t);return r.json(t)});
+app.get("/api/events",(q,r)=>{r.setHeader("Content-Type","text/event-stream");r.setHeader("Cache-Control","no-cache");r.flushHeaders();const onChange=(t:Task)=>r.write("data: "+JSON.stringify(t)+"\n\n");events.on("change",onChange);q.on("close",()=>events.off("change",onChange))});
+if(process.env.NODE_ENV!=="test")app.listen(Number(process.env.PORT)||3000);
